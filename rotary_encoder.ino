@@ -15,16 +15,16 @@ byte midiOut = 0, _midiOut = 0;
 
 int count = 0;
 
-//MIDI_CREATE_DEFAULT_INSTANCE();
-
 void setup() {
-//  Serial.begin(9600);
+
   MIDI.begin(MIDI_CHANNEL_OMNI);
-//  MIDI.sendNoteOn(42, 127
   avg = (int *) calloc(smooth, sizeof(int));
 }
 
 void loop() {
+  //read values from pin 2 & 3 (PIND = pins 0-7)
+  //shift pin state right: 10101100 -> 101011
+  //mask state of pins with 3 (11 in binary): 101011 -> 000011
   int val = (PIND >> 2) & 0x3;
   int valForAvg = 0;
   
@@ -35,6 +35,7 @@ void loop() {
     _val = val;
     valForAvg = 1;
   }
+  
   avg[index] = valForAvg;
   index = (index + 1) % smooth;
 
