@@ -1,3 +1,3 @@
-# rotary_encoder WIRA
+#  WIRA
 
-Code for the 'wheel instrument'
+Code for the WIRA wheel instrument
