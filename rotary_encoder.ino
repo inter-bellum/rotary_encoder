@@ -12,7 +12,6 @@ long cycleCount = 0;
 
 elapsedMillis sinceTouched; //keep track of when the wheel was last touched
 
-
 //forward declare functions
 void encoderIRQ(void);
 volatile uint8_t val = 0;

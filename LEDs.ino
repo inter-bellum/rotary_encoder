@@ -8,6 +8,7 @@
 // On a Trinket or Gemma we suggest changing this to 1:
 #define LED_PIN    10
 
+elapsedMillis sinceIdleLEDUpdate;
 
 // How many NeoPixels are attached to the Arduino?
 #define LED_COUNT 26
@@ -17,14 +18,11 @@ Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 bool isIdle = false; //are we idle?
 bool _isIdle = false; //were we idle?
-int timeOutThreshold = 60000; //this is about 5 minutes in ms
+const int timeOutThreshold = 5000; //this is about 5 minutes in ms
 
 int brights[LED_COUNT];//keep track of the brights of every idle LED
 
 int hues[LED_COUNT]; //keep track of all hues
-
-
-
 
 void initLEDs() {
   strip.begin();           // INITIALIZE NeoPixel strip object (REQUIRED)
@@ -38,8 +36,6 @@ void initLEDs() {
   delay(100);
   strip.clear();
   strip.show();
-
-
 }
 
 
@@ -65,6 +61,7 @@ void setLEDs(int midiOut) {
 }
 
 void blinkLEDS(int vol) {
+  //blink the LEDs at the level of the received vol
   if (LED_COUNT > 0) {
     for (int i = 0; i < LED_COUNT; i ++) {
       strip.setPixelColor(i, strip.Color(vol * 0.3, vol * 0.5, vol));
@@ -78,21 +75,27 @@ void blinkLEDS(int vol) {
 void idleLEDs() {
   //this function animates some idle sparkly stuff when the wheel is not touched for a while
   for (int i = 0; i < LED_COUNT; i++ ) {
-    brights[i] += int(random(-1.8, 2));
+    //increment all brightnesses a little bit with a preference to going up
+    brights[i] += int(random(-1.99, 2));
+    //make sure it never overflows
     brights[i] = constrain(brights[i], 0, 255);
-    //    Serial.print(String(scalingTable[int(brights[i]/2.)]) + ",");
-    Serial.print(String(brights[i]) + ", ");
+
+    //adjust the hue a little bit every time
     hues[i] += int(random(-100, 100));
+
+    //make sure it stays within a blue to red range (max is  65535)
     if (hues[i] < 32768) {
       hues[i] = 65535;
     } else if (hues[i] > 65535) {
       hues[i] = 32768;
     }
     strip.setPixelColor(i, strip.ColorHSV(hues[i], 255, int(scalingTable[int(brights[i] / 2.)] * 255.)));
-    //    Serial.print(String(brights[i]) + ",");
   }
-  Serial.println("");
+
   strip.show();
+
+  //reset the idle update timer
+  sinceIdleLEDUpdate = 0;
 }
 
 bool checkIdle() {
@@ -100,16 +103,33 @@ bool checkIdle() {
 
   //  Serial.println("Checking if wheel is idle");
   bool isIdle = false;
-  //  Serial.println("Sincetouched = " + String(sinceTouched));
+  //Did we not touch it for a while?
   if (sinceTouched > timeOutThreshold) {
     //    Serial.println("havent been touched in a while");
-    isIdle = true;
-    if (isIdle != _isIdle) {
+    isIdle = true; //then we are idle
+
+    //only update about every 25 millis
+    if (sinceIdleLEDUpdate > 25) {
+      //animate the LEDs when idle
+      idleLEDs();
+    }
+
+    if (isIdle != _isIdle) { //when it changed from not idle to idle
+      //then reset all hues and brightnesses
       restartIdle();
     }
-    idleLEDs();
   }
 
+  if (isIdle != _isIdle ) {
+    if (isIdle) {
+      //If we changed from idle to being active again
+      strip.setBrightness(10);
+    } else {
+      strip.setBrightness(50);
+    }
+  }
+
+  //keep track of older idle bool
   _isIdle = isIdle;
   return isIdle;
 }
@@ -117,7 +137,7 @@ bool checkIdle() {
 void restartIdle() {
   Serial.println("Restarting idle ");
   for (int i = 0; i < LED_COUNT; i++) {
-    brights[i] = 0;
+    brights[i] = 0; //set all brightnesses to zero
     hues[i] = int(random(32768, 65535)); //fill everything with random hues between blue and red
     Serial.println(String(hues[i]) + ", " + String(brights[i]) + " - ");
   }
