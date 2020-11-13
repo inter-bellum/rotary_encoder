@@ -4,7 +4,10 @@
 #define CW 1
 #define CCW 2
 
-#define DEBUG
+//#define DEBUG
+
+#define BUILT_IN_LED_ON()    (digitalWrite(13, HIGH))
+#define BUILT_IN_LED_OFF()   (digitalWrite(13, LOW))
 
 
 
@@ -13,12 +16,21 @@ long cycleCount = 0;
 elapsedMillis sinceTouched; //keep track of when the wheel was last touched
 
 //forward declare functions
+//encoder interrupt function
 void encoderIRQ(void);
-volatile uint8_t val = 0;
+
+//variables that hold the encoder pin values
+volatile uint8_t encoderPinValues = 0, _encoderPinValues = 0;
+
+//flag for detecting a new value
 volatile bool newVal = false;
 
+//encoder direction table. translates the value of the two encoder pins into a single directional value
 static int table[] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
 
+
+uint8_t scalingTableLength = 128;
+//table for scaling LED brightness values parabolically, giving the lower range smaller steps
 const float scalingTable[] = {
   0.,       0.000689, 0.002756, 0.0062,   0.011022, 0.017222, 0.0248,   0.033756, 0.044089, 0.0558,   0.068889, 0.083356, 0.0992,   0.102362, 0.110236, 0.11811,
   0.125984, 0.133858, 0.141732, 0.149606, 0.15748,  0.165354, 0.173228, 0.181102, 0.188976, 0.19685,  0.204724, 0.212598, 0.220472, 0.228346, 0.23622,  0.244094,
@@ -30,10 +42,10 @@ const float scalingTable[] = {
   0.88189,  0.889764, 0.897638, 0.905512, 0.913386, 0.92126,  0.929134, 0.937008, 0.944882, 0.952756, 0.96063,  0.968504, 0.976378, 0.984252, 0.992126, 1.
 };
 
-uint8_t i = 0;
-const uint8_t smooth = 70;
-uint16_t avg[smooth];
-volatile byte _val = 0;
+//running index for the smoothing table
+uint8_t smoothingIndex = 0;
+const uint8_t smoothingSampleCount = 70;
+uint16_t history[smoothingSampleCount];
 
 
 const uint8_t midiSmoothCount = 15;
@@ -63,71 +75,97 @@ void setup() {
 }
 
 void loop() {
-  uint8_t pinVal = val;
   uint16_t valForAvg = 0;
 
-  if (pinVal != _val) {
+  //if the encoder rotated
+  if (encoderPinValues != _encoderPinValues) {
+    //add 1 to the running average, regardless of direction
     valForAvg = 1;
-    _val = val;
-    digitalWrite(13, HIGH);
+    //save the new value
+    _encoderPinValues = encoderPinValues;
+    BUILT_IN_LED_ON();
   } else {
-    digitalWrite(13, LOW);
+    BUILT_IN_LED_OFF();
   }
 
 
 #ifdef DEBUG
-  //  Serial.print(0);
-  //  Serial.print(",");
-  //  Serial.print(127);
-  //  Serial.print(",");
-//  Serial.println(val);
+    Serial.print(0);
+    Serial.print(",");
+    Serial.print(127);
+    Serial.print(",");
+    Serial.println(encoderPinValues);
 #endif
 
-  avg[i] = valForAvg;
-  i = (i + 1) % smooth;
+  //add the value to the array of values for averaging
+  history[smoothingIndex] = valForAvg;
+  //increment index into the array of values for averaging
+  smoothingIndex = (smoothingIndex + 1) % smoothingSampleCount;
 
+  //sum the values
   float sum = 0;
-  for (int i = 0; i < smooth; i++) {
-    sum += avg[i];
+  for (int i = 0; i < smoothingSampleCount; i++) {
+    sum += history[i];
   }
 
-  midiOut = floor(scalingTable[int(floor(sum / smooth * 127))] * (sum / smooth) * 127);
+  //calculate index in the scalingTable by calculating the average between 0 and 1, then multiplying by the size of the array - 1
+  uint8_t indexIntoScalingTable = (uint8_t) (floor(sum / smoothingSampleCount * (scalingTableLength - 1)));
+  
+  //the scaling table again returns a number between 0 and 1, so multiply by 127 to get the max midi value
+  midiOut = floor(scalingTable[indexIntoScalingTable] * 127);
+  
+  //add the value to the midi smoothing array
   midiSmooth[midiSmoothIndex] = midiOut;
+
+  //increment midi smooth index
   midiSmoothIndex = (midiSmoothIndex + 1) % midiSmoothCount;
 
   float midiSum = 0;
 
+  //calculate the sum of the midi values
   for (int i = 0; i < midiSmoothCount; i++) {
     midiSum += midiSmooth[i];
   }
 
+  //average te value
   uint8_t midiSmoothedOut = floor(midiSum / midiSmoothCount);
 
 #ifdef DEBUG
-  //    Serial.println(midiSmoothedOut);
+    Serial.println(midiSmoothedOut);
 #endif
 
+  //if it's different
   if (midiOut != _midiOut) {
     sinceTouched = 0;
+    //send the value
     usbMIDI.sendControlChange(80, midiOut, 1);
+    //save the new value
     _midiOut = midiOut;
   }
 
+  //do some LED magic
   setLEDs(midiOut);
 
+  //process midi if new data is available
   if (usbMIDI.read()) {
     processMIDI();
   }
 
+  //why?
   delayMicroseconds(700);
 
-
+  //check for idle
   checkIdle();
 }
 
 void encoderIRQ(void) {
-  val = (PIND >> 2) & 0x3;
+  //get the encoder pin values by shifting the (P)in (IN)put register for pin port (D) (digital pins 0-7) to the right by the first pin number (we're reading pin 2 and 3)
+  //then mask the result with 0b11 to get rid of noise/values on the other pins
+  encoderPinValues = (PIND >> 2) & 0x3;
 
-  int tableIndex = (_val << 2 | val);
+  //calculate the table index by some magic where the difference between the previous and current reading is used as an array index
+  int tableIndex = (_encoderPinValues << 2 | encoderPinValues);
+  
+  //add the (add this point directional) value to the step count
   count += table[tableIndex];
 }
